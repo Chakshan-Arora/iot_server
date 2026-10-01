@@ -31,7 +31,21 @@ def save_sensor_data(data):
 
     sensor_data.insert_one(document)
 
-    print("Data saved to MongoDB")
+    # print("Data saved to MongoDB")
+
+def save_sensor_data_batch(batch):
+    documents = [
+        {
+            "device_id": d["device_id"],
+            "sensor": d["sensor"],
+            "value": d["value"],
+            "unit": d["unit"],
+            "priority": d["priority"],
+            "timestamp": datetime.now()
+        }
+        for d in batch
+    ]
+    sensor_data.insert_many(documents, ordered=False)
 
 
 def register_device(device_id, sensor):
@@ -50,19 +64,13 @@ def register_device(device_id, sensor):
         upsert=True
     )
 
-    print(f"Device registry updated: {device_id}")
+    # print(f"Device registry updated: {device_id}")
 
 
 def update_device_status(device_id, status):
-
     devices.update_one(
         {"device_id": device_id},
-        {
-            "$set": {
-                "status": status,
-                "last_seen": datetime.now()
-            }
-        }
+        {"$set": {"status": status}}
     )
 
 def get_devices():

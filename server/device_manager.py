@@ -26,15 +26,17 @@ def update_device(device_id):
 
 def check_offline_devices():
     while True:
-        current_time = datetime.now()
-
-        for device in get_devices():
-            time_since_last_message = (current_time - device["last_seen"]).total_seconds()
-
-            if time_since_last_message > OFFLINE_TIMEOUT:
-                update_device_status(device['device_id'], device['status'])
-
-    time.sleep(2)
+        try:
+            current_time = datetime.now()
+            for device in get_devices():
+                last_seen = device.get("last_seen")
+                if last_seen is None or device.get("status") == "Offline":
+                    continue
+                if (current_time - last_seen).total_seconds() > OFFLINE_TIMEOUT:
+                    update_device_status(device["device_id"], "Offline")
+        except Exception as e:
+            print(f"Device monitor error: {e}")
+        time.sleep(2)
 
 
 

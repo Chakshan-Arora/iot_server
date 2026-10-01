@@ -26,10 +26,8 @@ def show_pending_requests():
     print("\n--------------------------------")
 
 
-def handle_request():
-    show_pending_requests()
-
-    request_id = input("\nEnter Request ID: ").strip()
+def handle_request(request_id):
+    # request_id = input("\nEnter Request ID: ").strip()
 
     if not request_id:
         return
@@ -57,3 +55,32 @@ def handle_request():
 
     else:
         print("Invalid choice.")
+
+
+import time
+
+def admin_panel():
+    while True:
+        print("\n--- Admin Panel ---")
+
+        # Display pending requests from MongoDB
+        show_pending_requests()
+
+        print("\nEnter request ID to handle")
+        print("R - Refresh")
+        print("Q - Quit")
+
+        choice = input("Choice: ").strip()
+
+        if choice.lower() == "q":
+            break
+
+        elif choice.lower() == "r":
+            continue
+
+        else:
+            handle_request(choice)
+
+        time.sleep(10)
+
+admin_panel()

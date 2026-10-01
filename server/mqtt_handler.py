@@ -2,6 +2,7 @@ import paho.mqtt.client as mqtt
 import json
 import os
 from dotenv import load_dotenv
+import time
 
 from device_manager import update_device, show_devices
 from priority_manager import add_message
@@ -42,8 +43,8 @@ def validate_data(data):
         return False, f"value must be a number"
 
 
-    # if data["priority"] not in ["normal", "high"]:
-    #     return False, "invalid property"
+    if data["priority"] not in ["normal", "high"]:
+        return False, "invalid property"
 
 
     return True, "valid"
@@ -56,6 +57,22 @@ def on_connect(client, userdata, flags, reason_code, properties):
 
     print(f"Subscribed to: {TOPIC}")
 
+
+_priority_cache = {}
+CACHE_TTL = 30
+
+def get_device_priority_cached(device_id):
+    now = time.monotonic()
+    entry = _priority_cache.get(device_id)
+    if entry and now - entry[1] < CACHE_TTL:
+        return entry[0]
+    priority = get_device_priority(device_id)
+    _priority_cache[device_id] = (priority, now)
+    return priority
+
+
+_last_escalation = {}
+ESCALATION_COOLDOWN = 10
 
 def on_message(client, userdata, message):
     message_received()
@@ -87,50 +104,39 @@ def on_message(client, userdata, message):
         return
 
     print("\nAccepted Data")
-    print(f"Device: {data['device_id']}")
-    print(f"Sensor: {data['sensor']}")
-    print(f"Value: {data['value']} {data['unit']}")
+    # print(f"Device: {data['device_id']}")
+    # print(f"Sensor: {data['sensor']}")
+    # print(f"Value: {data['value']} {data['unit']}")
 
-    device_priority = get_device_priority(data['device_id'])
+    device_priority = get_device_priority_cached(data['device_id'])
+
     if device_priority is None:
         print("Rejected: Device is not registered")
         message_rejected()
         return
 
-    elif device_priority == "high":
+    if device_priority == "high" or data['priority'] == "normal":
+        data['priority'] = device_priority
         add_message(data)
+        priority_message(device_priority)
+        return
 
-    else:
-        if data['priority'] == "normal":
-            add_message(data)
+    reason = data.get("reason")
+    if not isinstance(reason, str) or reason.strip() == "":
+        print("Rejected: A non-empty text reason is required for priority escalation")
+        message_rejected()
+        return
 
+    now = time.monotonic()
+    last = _last_escalation.get(data['device_id'])
+    if last is not None and now - last < ESCALATION_COOLDOWN:
+        print(f"Rejected: {data['device_id']} escalation requested too soon")
+        message_rejected()
+        return
+    _last_escalation[data['device_id']] = now
 
-        else:
-            if "reason" not in data:
-                print("Rejected: Reason required for priority escalation")
-                message_rejected()
-                return
-            if not isinstance(data['reason'],str):
-                print("Rejected: Reason must be a string")
-                message_rejected()
-                return
-            if data['reason'].strip() == "":
-                print("Rejected: Reason cant be empty")
-                message_rejected()
-                return
-
-            request_id = create_priority_request(data['device_id'], data['priority'], data['reason'], data)
-
-            print(f"Priority escalation requires approval | Request ID : {request_id}")
-
-
-    data['priority'] = device_priority
-    print(f"Priority: {data['priority']}")
-
-    print()
-    priority_message(data["priority"])
-    # update_device(data['device_id'])
-    # show_devices()
+    request_id = create_priority_request(data['device_id'], data['priority'], reason, data)
+    print(f"Priority escalation requires approval | Request ID : {request_id}")
 
 
 def start_mqtt():

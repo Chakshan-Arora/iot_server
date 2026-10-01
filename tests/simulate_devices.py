@@ -11,103 +11,56 @@ import paho.mqtt.client as mqtt
 BROKER = "localhost"
 PORT = 1883
 
+MESSAGES_PER_DEVICE = 100
+SEND_DELAY = 0.1
+
 load_dotenv()
 
 DEVICES = [
     {
-        "device_id": "ESP32_01",
-        "password": os.getenv("ESP32_01_PASSWORD"),
-        "sensor": "ultrasonic",
-        "priority": "high"
-    },
-    {
-        "device_id": "ESP32_02",
-        "password": os.getenv("ESP32_02_PASSWORD"),
-        "sensor": "light",
-        "priority": "normal"
-    },
-    {
-        "device_id": "ESP32_03",
-        "password": os.getenv("ESP32_03_PASSWORD"),
-        "sensor": "accelerometer",
-        "priority": "normal"
-    },
-    {
-        "device_id": "ESP32_04",
-        "password": os.getenv("ESP32_04_PASSWORD"),
-        "sensor": "touch",
-        "priority": "high"
-    },
-    {
-        "device_id": "ESP32_05",
-        "password": os.getenv("ESP32_05_PASSWORD"),
-        "sensor": "light",
-        "priority": "normal"
-    },
-    {
-        "device_id": "ESP32_06",
-        "password": os.getenv("ESP32_06_PASSWORD"),
-        "sensor": "ultrasonic",
-        "priority": "normal"
-    },
-    {
-        "device_id": "ESP32_07",
-        "password": os.getenv("ESP32_07_PASSWORD"),
-        "sensor": "accelerometer",
-        "priority": "normal"
-    },
-    {
-        "device_id": "ESP32_08",
-        "password": os.getenv("ESP32_08_PASSWORD"),
-        "sensor": "light",
-        "priority": "high"
-    },
-    {
-        "device_id": "ESP32_09",
-        "password": os.getenv("ESP32_09_PASSWORD"),
-        "sensor": "touch",
-        "priority": "normal"
-    },
-    {
-        "device_id": "ESP32_10",
-        "password": os.getenv("ESP32_10_PASSWORD"),
-        "sensor": "ultrasonic",
-        "priority": "normal"
+        "device_id": device_id,
+        "password": os.getenv(f"{device_id}_PASSWORD"),
+        "sensor": sensor,
+        "priority": priority,
     }
+    for device_id, sensor, priority in [
+        ("ESP32_01", "ultrasonic", "high"),
+        ("ESP32_02", "light", "normal"),
+        ("ESP32_03", "accelerometer", "normal"),
+        ("ESP32_04", "touch", "high"),
+        ("ESP32_05", "light", "normal"),
+        ("ESP32_06", "ultrasonic", "normal"),
+        ("ESP32_07", "accelerometer", "normal"),
+        ("ESP32_08", "light", "high"),
+        ("ESP32_09", "touch", "normal"),
+        ("ESP32_10", "ultrasonic", "normal"),
+    ]
 ]
+
+escalations_sent = []
 
 
 def generate_value(sensor):
-
     if sensor == "ultrasonic":
         return random.randint(10, 200)
-
     elif sensor == "light":
         return random.randint(0, 100)
-
     elif sensor == "accelerometer":
         return round(random.uniform(0.8, 1.2), 2)
-
     elif sensor == "touch":
         return random.randint(0, 1)
-
     return 0
 
 
 def get_unit(sensor):
-
     if sensor == "ultrasonic":
         return "cm"
-
     elif sensor == "light":
         return "percent"
-
     elif sensor == "accelerometer":
         return "g"
-
     elif sensor == "touch":
         return "boolean"
-
     return "unknown"
 
 
@@ -117,26 +70,41 @@ def simulate_device(device):
     sensor = device["sensor"]
     priority = device["priority"]
 
+    escalate_at = None
+    if priority == "normal":
+        escalate_at = random.randint(10, MESSAGES_PER_DEVICE - 10)
+
     client = mqtt.Client(
         mqtt.CallbackAPIVersion.VERSION2,
         client_id=device_id
     )
 
-    client.username_pw_set(
-        device_id,
-        device["password"]
-    )
+    client.username_pw_set(device_id, device["password"])
+
+    connected = threading.Event()
+
+    def on_connect(client, userdata, flags, reason_code, properties):
+        if reason_code.is_failure:
+            print(f"{device_id} refused: {reason_code}")
+        else:
+            connected.set()
+
+    client.on_connect = on_connect
 
     try:
         client.connect(BROKER, PORT)
+        client.loop_start()
+
+        if not connected.wait(5):
+            print(f"{device_id} could not connect")
+            client.loop_stop()
+            return
 
         print(f"{device_id} connected")
 
-        client.loop_start()
-
         topic = f"devices/{device_id}/data"
 
-        for i in range(10):
+        for i in range(MESSAGES_PER_DEVICE):
 
             value = generate_value(sensor)
             unit = get_unit(sensor)
@@ -148,21 +116,19 @@ def simulate_device(device):
                 "unit": unit,
                 "priority": priority
             }
+            label = priority
 
-            payload = json.dumps(data)
+            if i == escalate_at:
+                data["priority"] = "high"
+                data["reason"] = f"{device_id} detected an abnormal {sensor} reading"
+                label = "HIGH (needs approval)"
+                escalations_sent.append(device_id)
 
-            client.publish(
-                topic,
-                payload
-            )
+            client.publish(topic, json.dumps(data))
 
-            print(
-                f"{device_id} → "
-                f"{sensor}: {value} {unit} | "
-                f"Priority: {priority}"
-            )
+            print(f"{device_id} → {sensor}: {value} {unit} | Priority: {label}")
 
-            time.sleep(1)
+            time.sleep(SEND_DELAY)
 
         client.loop_stop()
         client.disconnect()
@@ -180,12 +146,7 @@ def main():
     print("\nStarting device simulation...\n")
 
     for device in DEVICES:
-
-        thread = threading.Thread(
-            target=simulate_device,
-            args=(device,)
-        )
-
+        thread = threading.Thread(target=simulate_device, args=(device,))
         threads.append(thread)
         thread.start()
 
@@ -193,8 +154,8 @@ def main():
         thread.join()
 
     print("\nAll simulated devices finished.")
+    print(f"Escalation requests sent: {len(escalations_sent)} {sorted(escalations_sent)}")
 
 
 if __name__ == "__main__":
     main()
-
